@@ -148,6 +148,25 @@ footer{padding:26px 0;color:var(--muted);font-size:13px;border-top:1px solid var
   .modal-grid{grid-template-columns:1fr}
   .actions .btn{width:100%;justify-content:center}
 }
+
+/* interaktivno stablo */
+.family-graph{position:relative;height:min(72vh,640px);overflow:hidden;cursor:grab;padding:0}
+.family-graph:active{cursor:grabbing}
+#familyGraph{width:100%;height:100%;display:block;touch-action:none}
+.tree-controls{position:absolute;top:12px;right:12px;z-index:6;display:flex;flex-direction:column;gap:7px}
+.tree-controls button{width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--paper);color:var(--green);font-size:19px;line-height:1;cursor:pointer;box-shadow:var(--shadow)}
+.tree-controls button:hover{background:var(--green);color:#fff}
+.family-graph .tree-note{position:absolute;left:14px;bottom:12px;background:rgba(255,253,247,.9);padding:6px 11px;border-radius:9px;font-size:12px;color:var(--muted);max-width:74%;box-shadow:var(--shadow)}
+.tnode{cursor:pointer}
+.tnode rect.card{fill:var(--paper);stroke:var(--line);stroke-width:1.2}
+.tnode.male rect.card{stroke:#3a6ea5}
+.tnode.female rect.card{stroke:#b0567f}
+.tnode.focus rect.card{stroke:var(--gold);stroke-width:2.6;fill:#fdf6e6}
+.tnode:hover rect.card{fill:#f3efe4}
+.tnode text.tn{fill:var(--ink);font:600 12px Inter,ui-sans-serif,sans-serif}
+.tnode text.ty{fill:var(--muted);font:11px Inter,ui-sans-serif,sans-serif}
+path.tlink{fill:none;stroke:#c9bfa9;stroke-width:1.5}
+path.tlink.mar{stroke:var(--gold);stroke-width:1.6}
 </style>
 </head>
 <body>
@@ -224,9 +243,14 @@ footer{padding:26px 0;color:var(--muted);font-size:13px;border-top:1px solid var
         
       </select>
     </div>
-    <div class="family-graph">
-      <svg id="familyGraph" viewBox="0 0 1000 560" role="img" aria-label="Vizualni prikaz neposrednih obiteljskih veza"></svg>
-      <div class="tree-note">Klikni osobu za otvaranje njezinih veza. Na mobitelu povuci prikaz vodoravno.</div>
+    <div class="family-graph" id="familyGraphWrap">
+      <div class="tree-controls">
+        <button type="button" id="zoomIn" title="Približi">+</button>
+        <button type="button" id="zoomOut" title="Udalji">−</button>
+        <button type="button" id="zoomFit" title="Prilagodi">⤢</button>
+      </div>
+      <svg id="familyGraph" role="img" aria-label="Interaktivno obiteljsko stablo"></svg>
+      <div class="tree-note">Povuci za pomicanje · kotačić za zoom · klik centrira osobu · Geni profil u kartici lijevo</div>
     </div>
     <div class="tree-shell">
       <aside class="focus-card" id="focusCard"></aside>
@@ -377,64 +401,60 @@ function relGroup(title,list){
 function geniUrl(p){
   return p ? `https://www.geni.com/profile/index/${p.id}` : '#';
 }
-function graphNode(p,x,y,w=180,h=64,extra=''){
-  if(!p) return '';
-  const cls=`family-node ${p.g||''} ${extra}`;
-  const nm=escapeHtml(shownName(p));
-  const yr=escapeHtml(years(p));
-  return `<g class="${cls}" onclick="setFocus('${p.id}')" transform="translate(${x},${y})">
-    <rect width="${w}" height="${h}"></rect>
-    <text class="name" x="${w/2}" y="27" text-anchor="middle">${nm.length>24?nm.slice(0,23)+'…':nm}</text>
-    <text class="years" x="${w/2}" y="47" text-anchor="middle">${yr}</text>
-  </g>`;
+/* ===== Interaktivno obiteljsko stablo (hourglass) ===== */
+const TG={uP:new Map(),uC:new Map(),vx:0,vy:0,scale:1,last:null,wired:false};
+for(const u of unions){
+  (u.p||[]).forEach(id=>{ if(!TG.uP.has(id))TG.uP.set(id,[]); TG.uP.get(id).push(u); });
+  (u.c||[]).forEach(id=>{ TG.uC.set(id,u); });
+}
+const CW=172,CH=54,HGAP=16,VGAP=66,SGAP=8;
+function tgParents(id){ const u=TG.uC.get(id); return u?(u.p||[]).filter(x=>x!==id&&byId.get(x)):[]; }
+function nodePhoto(p){ return (!isLiving(p))?(p.photo||null):null; }
+function nodeSVG(p,x,y,focus){
+  const cls=p.g==='m'?'male':p.g==='f'?'female':'';
+  const nm=escapeHtml(shownName(p)); const nmS=nm.length>19?nm.slice(0,18)+'…':nm;
+  const yr=escapeHtml(years(p)); const ph=nodePhoto(p);
+  const cid='pc'+p.id+'_'+Math.round(x)+'_'+Math.round(y);
+  let inner;
+  if(ph){ inner='<clipPath id="'+cid+'"><circle cx="27" cy="27" r="17"/></clipPath><image href="'+ph+'" x="10" y="10" width="34" height="34" clip-path="url(#'+cid+')" preserveAspectRatio="xMidYMid slice"/>'; }
+  else{ const fill=p.g==='m'?'#dbe6f2':p.g==='f'?'#f2dde8':'#e6e2d8'; const sym=p.g==='m'?'♂':p.g==='f'?'♀':'?'; inner='<circle cx="27" cy="27" r="17" fill="'+fill+'"/><text x="27" y="32" text-anchor="middle" font-size="15" fill="#8a8372">'+sym+'</text>'; }
+  return '<g class="tnode '+cls+(focus?' focus':'')+'" transform="translate('+(x-CW/2)+','+y+')" onclick="setFocus(\''+p.id+'\')"><rect class="card" width="'+CW+'" height="'+CH+'" rx="9"/>'+inner+'<text class="tn" x="52" y="24">'+nmS+'</text><text class="ty" x="52" y="40">'+yr+'</text></g>';
+}
+function applyTree(svg){ const g=svg.querySelector('#treeG'); if(g) g.setAttribute('transform','translate('+TG.vx+','+TG.vy+') scale('+TG.scale+')'); }
+function fitTree(svg){ const g=svg.querySelector('#treeG'); if(!g)return; let bb; try{bb=g.getBBox();}catch(e){return;} const w=svg.clientWidth||900,h=svg.clientHeight||560; TG.scale=Math.min(w/(bb.width+90),h/(bb.height+90),1.1)||1; TG.vx=w/2-(bb.x+bb.width/2)*TG.scale; TG.vy=h/2-(bb.y+bb.height/2)*TG.scale; applyTree(svg); }
+function wireTree(svg){ if(TG.wired)return; TG.wired=true; let drag=false,lx=0,ly=0;
+  svg.addEventListener('mousedown',e=>{drag=true;lx=e.clientX;ly=e.clientY;});
+  window.addEventListener('mousemove',e=>{ if(!drag)return; TG.vx+=e.clientX-lx; TG.vy+=e.clientY-ly; lx=e.clientX; ly=e.clientY; applyTree(svg); });
+  window.addEventListener('mouseup',()=>drag=false);
+  svg.addEventListener('wheel',e=>{ e.preventDefault(); const f=e.deltaY<0?1.12:0.89; const r=svg.getBoundingClientRect(); const mx=e.clientX-r.left,my=e.clientY-r.top; TG.vx=mx-(mx-TG.vx)*f; TG.vy=my-(my-TG.vy)*f; TG.scale*=f; applyTree(svg); },{passive:false});
+  const zi=document.getElementById('zoomIn'),zo=document.getElementById('zoomOut'),zf=document.getElementById('zoomFit');
+  if(zi)zi.onclick=()=>{TG.scale*=1.15;applyTree(svg);};
+  if(zo)zo.onclick=()=>{TG.scale/=1.15;applyTree(svg);};
+  if(zf)zf.onclick=()=>fitTree(svg);
 }
 function renderGraph(){
-  const svg=document.getElementById('familyGraph');
-  const p=byId.get(focusId)||people[0];
-  const parents=directRel(parentsOf.get(p.id)).slice(0,2);
-  const partners=directRel(partnersOf.get(p.id)).slice(0,2);
-  const children=directRel(childrenOf.get(p.id)).slice(0,6);
-
-  const focusX=410, focusY=235, nodeW=180, nodeH=64;
+  const svg=document.getElementById('familyGraph'); if(!svg)return;
+  const focus=byId.get(focusId)||people[0]; focusId=focus.id;
+  const placed=[],links=[],seenA=new Set(),seenD=new Set();
+  function buildAnc(id,gen,max,seen){ if(gen>max||seen.has(id))return null; seen.add(id); const n={id,kids:[]}; if(gen<max) tgParents(id).forEach(pid=>{const c=buildAnc(pid,gen+1,max,seen); if(c)n.kids.push(c);}); return n; }
+  function ancW(n){ if(!n)return 0; n.kw=n.kids.map(ancW); const kw=n.kw.reduce((a,b)=>a+b,0)+Math.max(0,n.kids.length-1)*HGAP; n.w=Math.max(CW,kw); return n.w; }
+  function placeAnc(n,cx,gen){ n.x=cx; n.y=-gen*(CH+VGAP); if(gen>0)placed.push({id:n.id,x:cx,y:n.y}); let sx=cx-n.w/2; n.kids.forEach((k,i)=>{ const w=n.kw[i]; const kcx=sx+w/2; placeAnc(k,kcx,gen+1); links.push({x1:kcx,y1:k.y+CH,x2:cx,y2:n.y}); sx+=w+HGAP; }); if(n.kids.length===2){ const a=n.kids[0],b=n.kids[1]; links.push({mar:1,x1:a.x+CW/2,y1:a.y+CH/2,x2:b.x-CW/2,y2:b.y+CH/2}); } }
+  function buildDesc(id,gen,max,seen){ if(seen.has(id))return null; seen.add(id); const n={id,fams:[]}; if(gen<max){ (TG.uP.get(id)||[]).forEach(u=>{ const sp=(u.p||[]).find(x=>x!==id&&byId.get(x)); const kids=(u.c||[]).filter(x=>byId.get(x)).map(c=>buildDesc(c,gen+1,max,seen)).filter(Boolean); if(sp||kids.length)n.fams.push({spouse:sp||null,children:kids}); }); } return n; }
+  function descW(n){ const spN=n.fams.filter(f=>f.spouse).length; n.ownW=CW+spN*(CW+SGAP); let kw=0,kc=0; n.fams.forEach(f=>f.children.forEach(c=>{kw+=descW(c);kc++;})); kw+=Math.max(0,kc-1)*HGAP; n.w=Math.max(n.ownW,kw); return n.w; }
+  function placeDesc(n,cx,gen){ n.x=cx; n.y=gen*(CH+VGAP); if(gen>0)placed.push({id:n.id,x:cx,y:n.y}); let spx=cx+CW+SGAP; n.fams.forEach(f=>{ if(f.spouse){ placed.push({id:f.spouse,x:spx,y:n.y}); links.push({mar:1,x1:cx+CW/2,y1:n.y+CH/2,x2:spx-CW/2,y2:n.y+CH/2}); f.ax=(cx+spx)/2; spx+=CW+SGAP; } else f.ax=cx; }); let kw=0,kc=0; n.fams.forEach(f=>f.children.forEach(c=>{kw+=c.w;kc++;})); kw+=Math.max(0,kc-1)*HGAP; let sx=cx-kw/2+(n.ownW-CW)/2; n.fams.forEach(f=>{ f.children.forEach(c=>{ const kcx=sx+c.w/2; placeDesc(c,kcx,gen+1); links.push({x1:kcx,y1:c.y,x2:f.ax,y2:n.y+CH}); sx+=c.w+HGAP; }); }); }
+  const anc=buildAnc(focus.id,0,10,seenA); ancW(anc); placeAnc(anc,0,0);
+  const desc=buildDesc(focus.id,0,10,seenD); descW(desc); placeDesc(desc,0,0);
+  placed.push({id:focus.id,x:0,y:0,focus:true});
+  const uc=TG.uC.get(focus.id);
+  if(uc){ const spread=Math.max(anc?anc.w:0,desc?desc.w:0)/2; let sibX=-spread-CW; (uc.c||[]).filter(x=>x!==focus.id&&byId.get(x)&&!seenD.has(x)).forEach((s,i)=>{ placed.push({id:s,x:sibX-i*(CW+HGAP),y:0}); links.push({x1:sibX-i*(CW+HGAP),y1:CH/2,x2:-CW/2,y2:CH/2}); }); }
+  const seen=new Set(),uniq=[];
+  for(const pl of placed){ if(seen.has(pl.id)&&!pl.focus)continue; seen.add(pl.id); uniq.push(pl); }
   let parts=[];
-
-  // Parent connectors and nodes
-  if(parents.length){
-    const px=parents.length===1?[410]:[245,575];
-    px.forEach((x,i)=>{
-      parts.push(`<path class="family-link" d="M ${x+90} 144 V 190 H 500 V 235"></path>`);
-      parts.push(graphNode(parents[i],x,80));
-    });
-  }
-
-  // Focus
-  parts.push(graphNode(p,focusX,focusY,nodeW,nodeH,'focus'));
-
-  // Partners
-  const partnerPositions=partners.length===1?[[650,235]]:[[650,200],[650,300]];
-  partners.forEach((pp,i)=>{
-    const [x,y]=partnerPositions[i];
-    parts.push(`<path class="family-link partner" d="M 590 267 H ${x}"></path>`);
-    parts.push(graphNode(pp,x,y));
-  });
-
-  // Children connectors and nodes
-  if(children.length){
-    const gap=145;
-    const total=(children.length-1)*gap;
-    const start=Math.max(15,500-total/2-90);
-    parts.push(`<path class="family-link" d="M 500 299 V 370"></path>`);
-    children.forEach((c,i)=>{
-      const x=start+i*gap;
-      parts.push(`<path class="family-link" d="M 500 370 H ${x+65} V 410"></path>`);
-      parts.push(graphNode(c,x,410,130,58));
-    });
-  }
-
-  if(!parents.length && !partners.length && !children.length){
-    parts.push(`<text x="500" y="350" text-anchor="middle" fill="#677067">Za ovu osobu nisu pronađene neposredne veze.</text>`);
-  }
-  svg.innerHTML=parts.join('');
+  links.forEach(l=>{ if(l.mar) parts.push('<path class="tlink mar" d="M '+l.x1+' '+l.y1+' L '+l.x2+' '+l.y2+'"/>'); else { const my=(l.y1+l.y2)/2; parts.push('<path class="tlink" d="M '+l.x1+' '+l.y1+' C '+l.x1+' '+my+', '+l.x2+' '+my+', '+l.x2+' '+l.y2+'"/>'); } });
+  uniq.forEach(pl=>{ const p=byId.get(pl.id); if(p)parts.push(nodeSVG(p,pl.x,pl.y,pl.focus)); });
+  svg.innerHTML='<g id="treeG">'+parts.join('')+'</g>';
+  wireTree(svg);
+  if(TG.last!==focus.id){ TG.last=focus.id; fitTree(svg); } else applyTree(svg);
 }
 
 function renderFocus(){
